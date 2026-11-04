@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>꿀벌 꽃가루 모으기</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: "Malgun Gothic", sans-serif; background: #fff8dc; text-align: center; padding: 16px; }
+  h1 { font-size: 28px; margin-bottom: 4px; }
+  p { margin-bottom: 10px; color: #555; }
+  #hud { display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; margin: 8px 0; font-weight: bold; font-size: 18px; }
+  #hud .time.low { color: #d32f2f; }
+  #field { position: relative; width: min(800px, 100%); aspect-ratio: 16 / 9; margin: 0 auto; background: url("assets/background.png") center / cover no-repeat; border: 3px solid #333; border-radius: 12px; overflow: hidden; touch-action: none; }
+  .thing { position: absolute; transform: translate(-50%, -50%); user-select: none; pointer-events: none; }
+  .thing img { display: block; width: 100%; height: auto; filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.25)); }
+  .thing.bee { width: 10%; z-index: 2; }
+  .thing.flower { width: 6.5%; }
+  .thing.honey { width: 6%; }
+  .thing.spider { width: 7%; z-index: 1; }
+  .thing.hive { width: 10%; }
+  .banner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(0, 0, 0, 0.45); color: #fff; z-index: 10; pointer-events: none; text-align: center; }
+  .banner.hidden { display: none; }
+  .banner strong { font-size: 34px; text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); }
+  .banner span { font-size: 20px; }
+  #score { font-weight: bold; font-size: 20px; }
+  button { font: inherit; padding: 8px 18px; margin-top: 8px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1>꿀벌 꽃가루 모으기</h1>
+  <p>마우스나 손가락으로 꿀벌을 움직여 꽃과 꿀을 모아요. 벌집은 큰 보너스! 거미는 피해요!</p>
+  <div id="hud">
+    <span id="level">단계 1</span>
+    <span id="time" class="time">남은 시간 0초</span>
+    <span id="score">점수 0</span>
+  </div>
+  <div id="field">
+    <div id="banner" class="banner hidden">
+      <strong id="bannerTitle"></strong>
+      <span id="bannerSub"></span>
+    </div>
+  </div>
+  <button id="again">다시 하기</button>
+
+<script>
+  const THINGS = {
+    bee: { src: "assets/bee.png" },
+    flower: { src: "assets/flower.png" },
+    honey: { src: "assets/honey.png" },
+    hive: { src: "assets/hive.png" },
+    spider: { src: "assets/spider.png" }
+  };
+
+  const field = document.getElementById("field");
+  const hudLevel = document.getElementById("level");
+  const hudTime = document.getElementById("time");
+  const scoreBox = document.getElementById("score");
+  const banner = document.getElementById("banner");
+  const bannerTitle = document.getElementById("bannerTitle");
+  const bannerSub = document.getElementById("bannerSub");
+
+  let level = 1;
+  let score = 0;
+  let timeLeft = 0;
+  let playing = false;
+  let items = [];
+  let bee;
+  let rafId = 0;
+  let lastFrame = 0;
+  let nextLevelTimer = 0;
+
+  function levelConfig(lv) {
+    return {
+      time: Math.max(10, 32 - (lv - 1) * 2),
+      flowers: 5 + Math.min(lv, 10),
+      honey: 1 + Math.floor((lv - 1) / 3),
+      hive: 1,
+      spiders: Math.min(6, 1 + Math.floor(lv * 0.8)),
+      spiderSpeed: 6 + lv * 1.5
+    };
+  }
+
+  function add(kind, x, y, speed) {
+    const el = document.createElement("div");
+    el.className = "thing " + kind;
+    const img = document.createElement("img");
+    img.src = THINGS[kind].src;
+    img.alt = kind;
+    img.draggable = false;
+    el.appendChild(img);
+    el.style.left = x + "%";
+    el.style.top = y + "%";
+    field.appendChild(el);
+    const item = { kind, x, y, el, vx: 0, vy: 0 };
+    if (kind === "spider" && speed) {
+      const angle = Math.random() * Math.PI * 2;
+      item.vx = Math.cos(angle) * speed;
+      item.vy = Math.sin(angle) * speed;
+    }
+    return item;
+  }
+
+  function randomPos() {
+    return {
+      x: 8 + Math.random() * 84,
+      y: 12 + Math.random() * 76
+    };
+  }
+
+  function startLevel() {
+    clearTimeout(nextLevelTimer);
+    field.querySelectorAll(".thing").forEach((el) => el.remove());
+    items = [];
+    const cfg = levelConfig(level);
+    timeLeft = cfg.time;
+
+    for (let i = 0; i < cfg.flowers; i++) {
+      const p = randomPos();
+      items.push(add("flower", p.x, p.y));
+    }
+    for (let i = 0; i < cfg.honey; i++) {
+      const p = randomPos();
+      items.push(add("honey", p.x, p.y));
+    }
+    {
+      const p = randomPos();
+      items.push(add("hive", p.x, p.y));
+    }
+    for (let i = 0; i < cfg.spiders; i++) {
+      const p = randomPos();
+      items.push(add("spider", p.x, p.y, cfg.spiderSpeed));
+    }
+    bee = add("bee", 50, 50);
+
+    hudLevel.textContent = "단계 " + level;
+    banner.classList.add("hidden");
+    updateHud();
+    playing = true;
+    lastFrame = 0;
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function updateHud() {
+    scoreBox.textContent = "점수 " + score;
+    hudTime.textContent = "남은 시간 " + Math.ceil(timeLeft) + "초";
+    hudTime.classList.toggle("low", timeLeft <= 5);
+  }
+
+  function loop(t) {
+    if (!playing) return;
+    if (!lastFrame) lastFrame = t;
+    const dt = Math.min((t - lastFrame) / 1000, 0.05);
+    lastFrame = t;
+
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      updateHud();
+      gameOver();
+      return;
+    }
+
+    for (const it of items) {
+      if (it.kind !== "spider") continue;
+      it.x += it.vx * dt;
+      it.y += it.vy * dt;
+      if (it.x < 5 || it.x > 95) {
+        it.vx *= -1;
+        it.x = Math.max(5, Math.min(95, it.x));
+      }
+      if (it.y < 8 || it.y > 92) {
+        it.vy *= -1;
+        it.y = Math.max(8, Math.min(92, it.y));
+      }
+      it.el.style.left = it.x + "%";
+      it.el.style.top = it.y + "%";
+    }
+
+    checkCollisions();
+    updateHud();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function checkCollisions() {
+    if (!bee) return;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (Math.hypot(it.x - bee.x, (it.y - bee.y) * 0.56) > 5) continue;
+      items.splice(i, 1);
+      it.el.remove();
+      if (it.kind === "flower") score += 1;
+      else if (it.kind === "honey") score += 5;
+      else if (it.kind === "hive") score += 10;
+      else score -= 3;
+    }
+    const goodLeft = items.filter((it) => it.kind !== "spider").length;
+    if (goodLeft === 0) levelClear();
+  }
+
+  function levelClear() {
+    playing = false;
+    cancelAnimationFrame(rafId);
+    const bonus = Math.round(timeLeft) * 2;
+    score += bonus;
+    updateHud();
+    bannerTitle.textContent = "단계 " + level + " 클리어!";
+    bannerSub.textContent = "시간 보너스 +" + bonus + "점";
+    banner.classList.remove("hidden");
+    nextLevelTimer = setTimeout(() => {
+      level += 1;
+      startLevel();
+    }, 1500);
+  }
+
+  function gameOver() {
+    playing = false;
+    cancelAnimationFrame(rafId);
+    bannerTitle.textContent = "게임 종료!";
+    bannerSub.textContent = "도달 단계 " + level + " · 최종 점수 " + score + "점";
+    banner.classList.remove("hidden");
+  }
+
+  function move(e) {
+    if (!playing || !bee) return;
+    const box = field.getBoundingClientRect();
+    bee.x = Math.max(0, Math.min(100, ((e.clientX - box.left) / box.width) * 100));
+    bee.y = Math.max(0, Math.min(100, ((e.clientY - box.top) / box.height) * 100));
+    bee.el.style.left = bee.x + "%";
+    bee.el.style.top = bee.y + "%";
+    checkCollisions();
+  }
+
+  function restart() {
+    clearTimeout(nextLevelTimer);
+    level = 1;
+    score = 0;
+    startLevel();
+  }
+
+  field.addEventListener("pointermove", move);
+  field.addEventListener("pointerdown", move);
+  document.getElementById("again").addEventListener("click", restart);
+  startLevel();
+</script>
+</body>
+</html>
